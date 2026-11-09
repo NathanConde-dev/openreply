@@ -86,13 +86,20 @@ export async function sendPrivateReply({
   message: string;
   postId?: string;
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendPrivateReply(
-      context.accessToken,
+      token,
       instagramAccountId,
       commentId,
-      message
+      message,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({ context, commentId, postId, text: message });
 }
 
@@ -113,15 +120,22 @@ export async function sendPrivateReplyWithButton({
   payload: string;
   postId?: string;
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendPrivateReplyWithButton(
-      context.accessToken,
+      token,
       instagramAccountId,
       commentId,
       text,
       buttonTitle,
-      payload
+      payload,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({
     context,
     commentId,
@@ -146,15 +160,22 @@ export async function sendDirectMessageWithButton({
   buttonTitle: string;
   payload: string;
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendDirectMessageWithButton(
-      context.accessToken,
+      token,
       instagramAccountId,
       userId,
       text,
       buttonTitle,
-      payload
+      payload,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({
     context,
     recipientId: userId,
@@ -178,14 +199,21 @@ export async function sendPrivateReplyWithLinkButton({
   buttons: meta.LinkButton[];
   postId?: string;
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendPrivateReplyWithLinkButton(
-      context.accessToken,
+      token,
       instagramAccountId,
       commentId,
       text,
-      buttons
+      buttons,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({
     context,
     commentId,
@@ -206,13 +234,20 @@ export async function sendDirectMessage({
   userId: string;
   message: string;
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendDirectMessage(
-      context.accessToken,
+      token,
       instagramAccountId,
       userId,
-      message
+      message,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({ context, recipientId: userId, text: message });
 }
 
@@ -229,14 +264,21 @@ export async function sendDirectMessageWithLinkButton({
   text: string;
   buttons: meta.LinkButton[];
 }) {
-  if (context.provider === "META")
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
     return meta.sendDirectMessageWithLinkButton(
-      context.accessToken,
+      token,
       instagramAccountId,
       userId,
       text,
-      buttons
+      buttons,
+      context.authProvider,
+      context.pageId
     );
+  }
   return sendZernioMessage({
     context,
     recipientId: userId,
@@ -256,8 +298,13 @@ export async function sendCommentReply({
   message: string;
   postId?: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendCommentReply(context.accessToken, commentId, message);
+  if (context.provider === "META") {
+    const token =
+      context.authProvider === "FACEBOOK_LOGIN" && context.pageAccessToken
+        ? context.pageAccessToken
+        : context.accessToken;
+    return meta.sendCommentReply(token, commentId, message, context.authProvider);
+  }
   const result = await zernioRequest<{ data: { commentId: string } }>({
     apiKey: context.apiKey,
     path: `/inbox/comments/${encodeURIComponent(postId ?? commentId)}`,

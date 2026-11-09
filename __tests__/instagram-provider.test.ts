@@ -44,6 +44,9 @@ describe("Instagram provider boundary", () => {
         zernioAccountId: "selected",
         instagramId: "ig",
         accessToken: "",
+        authProvider: "INSTAGRAM_LOGIN",
+        pageId: null,
+        pageAccessToken: null,
       })
     ).toEqual({ ...context, apiKey: "decrypted:encrypted" });
     expect(prisma.zernioConnection.findUnique).toHaveBeenCalledWith({
@@ -122,7 +125,13 @@ describe("Instagram provider boundary", () => {
     respond({ data: [{ id: "media" }] });
     expect(
       await getUserMedia({
-        context: { provider: "META", accessToken: "meta" },
+        context: {
+          provider: "META",
+          accessToken: "meta",
+          authProvider: "INSTAGRAM_LOGIN",
+          pageId: null,
+          pageAccessToken: null,
+        },
         limit: 3,
       })
     ).toEqual([{ id: "media" }]);
