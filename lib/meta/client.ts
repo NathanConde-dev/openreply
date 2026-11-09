@@ -756,92 +756,181 @@ interface DiscoveredAccount {
   instagramId: string;
   username: string;
   name?: string;
-  pageId: string;
-  pageAccessToken: string;
+  pageId: string | null;
+  pageAccessToken: string | null;
 }
 
 /**
  * Discover Instagram Business accounts granted to a Meta Unified Login SUAT.
  * Uses debug_token's granular_scopes to reliably find granted IG account IDs,
  * then fetches Page associations and generates Page access tokens.
+ * Falls back through multiple discovery strategies if granular_scopes are unavailable.
  */
 export async function discoverInstagramAccountsFromSUAT(
   accessToken: string
 ): Promise<DiscoveredAccount[]> {
-  // Use debug_token to get granular_scopes with target_ids for instagram_basic
-  // This is the most reliable way to discover which IG accounts were granted
-  const debugUrl = new URL(`${facebookGraphBase()}/debug_token`);
-  debugUrl.searchParams.set("input_token", accessToken);
-  debugUrl.searchParams.set("access_token", accessToken);
-
-  const debugResponse = await fetch(debugUrl.toString());
-  const debugData = await handleResponse<{
-    data: {
-      granular_scopes?: Array<{
-        scope: string;
-        target_ids?: string[];
-      }>;
-    };
-  }>(debugResponse);
-
-  // Find instagram_basic scope to get the granted IG account IDs
-  const instagramScope = debugData.data.granular_scopes?.find(
-    (s) => s.scope === "instagram_basic"
-  );
+  // App access token required for debug_token API
+  const appAccessToken = `${requireEnv("INSTAGRAM_APP_ID")}|${requireEnv("INSTAGRAM_APP_SECRET")}`;
   
-  if (!instagramScope?.target_ids?.length) {
-    throw new Error(
-      "No Instagram accounts found in token grants. Check configuration permissions."
+  let igAccountIds: string[] = [];
+  
+  // Try 1: debug_token granular_scopes (most reliable)
+  try {
+    const debugUrl = new URL(`${facebookGraphBase()}/debug_token`);
+    debugUrl.searchParams.set("input_token", accessToken);
+    debugUrl.searchParams.set("access_token", appAccessToken);
+
+    const debugResponse = await fetch(debugUrl.toString());
+    const debugData = await handleResponse<{
+      data: {
+        granular_scopes?: Array<{
+          scope: string;
+          target_ids?: string[];
+        }>;
+      };
+    }>(debugResponse);
+
+    // Try instagram_basic first, then instagram_manage_messages
+    const basicScope = debugData.data.granular_scopes?.find(
+      (s) => s.scope === "instagram_basic"
     );
+    const messagesScope = debugData.data.granular_scopes?.find(
+      (s) => s.scope === "instagram_manage_messages"
+    );
+
+    igAccountIds = basicScope?.target_ids || messagesScope?.target_ids || [];
+    
+    if (igAccountIds.length > 0) {
+      console.log(
+        `[Instagram Account Discovery] Found ${igAccountIds.length} account(s) via granular_scopes`
+      );
+    }
+  } catch (error) {
+    console.warn("[Instagram Account Discovery] debug_token failed:", error);
   }
 
-  const discoveredAccounts: DiscoveredAccount[] = [];
-
-  // For each granted IG account, find its associated Page
-  for (const igAccountId of instagramScope.target_ids) {
+  // Try 2: /me/accounts with instagram_business_account field
+  if (igAccountIds.length === 0) {
     try {
-      // Find the Page that owns this IG account
       const pagesUrl = new URL(`${facebookGraphBase()}/me/accounts`);
-      pagesUrl.searchParams.set("fields", "id,access_token,instagram_business_account");
+      pagesUrl.searchParams.set(
+        "fields",
+        "id,access_token,instagram_business_account{id,username,name}"
+      );
       pagesUrl.searchParams.set("access_token", accessToken);
 
       const pagesResponse = await fetch(pagesUrl.toString());
       const pagesData = await handleResponse<{
         data: Array<{
-          id: string;
-          access_token: string;
           instagram_business_account?: { id: string };
         }>;
       }>(pagesResponse);
 
-      const page = pagesData.data.find(
-        (p) => p.instagram_business_account?.id === igAccountId
+      igAccountIds = pagesData.data
+        .filter((p) => p.instagram_business_account?.id)
+        .map((p) => p.instagram_business_account!.id);
+
+      if (igAccountIds.length > 0) {
+        console.log(
+          `[Instagram Account Discovery] Found ${igAccountIds.length} account(s) via /me/accounts`
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[Instagram Account Discovery] /me/accounts fallback failed:",
+        error
+      );
+    }
+  }
+
+  // Try 3: /me?fields=id,name as last resort
+  if (igAccountIds.length === 0) {
+    try {
+      const meUrl = new URL(`${facebookGraphBase()}/me`);
+      meUrl.searchParams.set("fields", "id,name");
+      meUrl.searchParams.set("access_token", accessToken);
+
+      const meResponse = await fetch(meUrl.toString());
+      const meData = await handleResponse<{ id: string; name?: string }>(
+        meResponse
       );
 
-      if (!page) {
-        console.warn(
-          `[Instagram Account Discovery] No Page found for IG account ${igAccountId}`
-        );
-        continue;
-      }
+      // This is a Page ID or user ID, but we'll try to use it
+      igAccountIds = [meData.id];
+      console.warn(
+        "[Instagram Account Discovery] Fell back to /me - this may not be an IG account ID"
+      );
+    } catch (error) {
+      console.error("[Instagram Account Discovery] All discovery methods failed");
+      throw new Error(
+        "No Instagram accounts found. Check configuration permissions and granted assets."
+      );
+    }
+  }
 
-      // Fetch IG account details using the Page access token on graph.facebook.com
+  const discoveredAccounts: DiscoveredAccount[] = [];
+
+  // For each discovered IG account ID, fetch details and find Page
+  for (const igAccountId of igAccountIds) {
+    try {
+      // Fetch IG account details using user token on graph.facebook.com
       const igUrl = new URL(`${facebookGraphBase()}/${igAccountId}`);
       igUrl.searchParams.set(
         "fields",
         "id,username,name,profile_picture_url,followers_count"
       );
-      igUrl.searchParams.set("access_token", page.access_token);
+      igUrl.searchParams.set("access_token", accessToken);
 
       const igResponse = await fetch(igUrl.toString());
       const igData = await handleResponse<InstagramUser>(igResponse);
+
+      // Find the Page that owns this IG account
+      let pageId: string | null = null;
+      let pageAccessToken: string | null = null;
+
+      try {
+        const pagesUrl = new URL(`${facebookGraphBase()}/me/accounts`);
+        pagesUrl.searchParams.set(
+          "fields",
+          "id,access_token,instagram_business_account"
+        );
+        pagesUrl.searchParams.set("access_token", accessToken);
+
+        const pagesResponse = await fetch(pagesUrl.toString());
+        const pagesData = await handleResponse<{
+          data: Array<{
+            id: string;
+            access_token: string;
+            instagram_business_account?: { id: string };
+          }>;
+        }>(pagesResponse);
+
+        const page = (pagesData.data || []).find(
+          (p) => p.instagram_business_account?.id === igAccountId
+        );
+
+        if (page) {
+          pageId = page.id;
+          pageAccessToken = page.access_token;
+        } else {
+          console.warn(
+            `[Instagram Account Discovery] No Page found for IG account ${igAccountId} (@${igData.username}). ` +
+              `Messaging may not work without a Page token. Check Facebook Login configuration.`
+          );
+        }
+      } catch (pageError) {
+        console.warn(
+          `[Instagram Account Discovery] Failed to fetch Page for ${igAccountId}:`,
+          pageError
+        );
+      }
 
       discoveredAccounts.push({
         instagramId: igData.id,
         username: igData.username,
         name: igData.name,
-        pageId: page.id,
-        pageAccessToken: page.access_token,
+        pageId,
+        pageAccessToken,
       });
     } catch (error) {
       console.warn(
@@ -849,6 +938,12 @@ export async function discoverInstagramAccountsFromSUAT(
         error
       );
     }
+  }
+
+  if (discoveredAccounts.length === 0) {
+    throw new Error(
+      "No Instagram Business accounts could be discovered. Check configuration and permissions."
+    );
   }
 
   return discoveredAccounts;
