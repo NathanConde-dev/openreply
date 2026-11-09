@@ -111,6 +111,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
       redirect_uri: redirectUri,
       response_type: "code",
       override_default_response_type: "true",
+      auth_type: "rerequest", // Show asset picker again on reconnect
       state,
     });
 

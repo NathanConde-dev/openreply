@@ -452,7 +452,7 @@ describe("Meta Unified Login", () => {
       expect(accounts[0].pageAccessToken).toBeNull();
     });
 
-    it("should NOT fall back to /me (system user ID is not an IG account)", async () => {
+    it("should NOT treat /me ID as IG account (diagnostics call /me but don't use it as fallback)", async () => {
       const userToken = "suat-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
@@ -479,13 +479,35 @@ describe("Meta Unified Login", () => {
         }),
       });
 
+      // Mock /me for diagnostics (returns system user ID)
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "122096822601548870", // System user ID
+          name: "System User",
+        }),
+      });
+
+      // Mock /me/permissions for diagnostics
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { permission: "public_profile", status: "granted" },
+          ],
+        }),
+      });
+
       await expect(
         discoverInstagramAccountsFromSUAT(userToken)
       ).rejects.toThrow("No Instagram Business accounts found");
 
-      // Verify /me was NOT called (no call to /me?fields=id)
+      // Verify /me WAS called for diagnostics (but not used as IG account)
       const calls = fetchMock.mock.calls.map((call) => call[0] as string);
-      expect(calls.some((url) => url.includes("/me?"))).toBe(false);
+      expect(calls.some((url) => url.includes("/me?fields=id"))).toBe(true);
+      
+      // But the system user ID should NOT have been added to discovered accounts
+      // (the function should throw before returning any accounts)
     });
   });
 

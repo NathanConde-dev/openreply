@@ -813,11 +813,11 @@ export async function discoverInstagramAccountsFromSUAT(
       }
     }
 
+    console.log(
+      `[Instagram Account Discovery] /me/assigned_instagram_accounts returned data_length=${igAccountIds.length}`
+    );
+
     if (igAccountIds.length > 0) {
-      console.log(
-        `[Instagram Account Discovery] Found ${igAccountIds.length} account(s) via /me/assigned_instagram_accounts`
-      );
-      
       for (const account of igAccountIds) {
         // Fetch additional profile details separately (soft-fail profile_picture_url and followers_count)
         let profilePicture: string | undefined;
@@ -873,12 +873,34 @@ export async function discoverInstagramAccountsFromSUAT(
       const debugResponse = await fetch(debugUrl.toString());
       const debugData = await handleResponse<{
         data: {
+          app_id?: string;
+          type?: string;
+          is_valid?: boolean;
+          scopes?: string[];
           granular_scopes?: Array<{
             scope: string;
             target_ids?: string[];
           }>;
         };
       }>(debugResponse);
+
+      // Diagnostic logging
+      console.log(
+        `[Instagram Account Discovery] debug_token: type=${debugData.data.type}, ` +
+        `is_valid=${debugData.data.is_valid}, app_id=${debugData.data.app_id}, ` +
+        `scopes=[${(debugData.data.scopes || []).join(",")}]`
+      );
+      
+      if (debugData.data.granular_scopes) {
+        for (const gs of debugData.data.granular_scopes) {
+          console.log(
+            `[Instagram Account Discovery] debug_token granular_scope: ` +
+            `scope=${gs.scope}, target_ids_count=${gs.target_ids?.length || 0}`
+          );
+        }
+      } else {
+        console.log("[Instagram Account Discovery] debug_token: no granular_scopes field");
+      }
 
       const basicScope = debugData.data.granular_scopes?.find(
         (s) => s.scope === "instagram_basic"
@@ -892,11 +914,11 @@ export async function discoverInstagramAccountsFromSUAT(
       const messageIds = messagesScope?.target_ids || [];
       const igAccountIds = basicIds.length > 0 ? basicIds : messageIds;
       
+      console.log(
+        `[Instagram Account Discovery] debug_token extracted target_ids_count=${igAccountIds.length}`
+      );
+
       if (igAccountIds.length > 0) {
-        console.log(
-          `[Instagram Account Discovery] Found ${igAccountIds.length} account(s) via granular_scopes`
-        );
-        
         for (const igAccountId of igAccountIds) {
           try {
             const profileUrl = new URL(`${facebookGraphBase()}/${igAccountId}`);
@@ -958,11 +980,12 @@ export async function discoverInstagramAccountsFromSUAT(
         (p) => p.instagram_business_account?.id
       );
       
+      console.log(
+        `[Instagram Account Discovery] /me/accounts returned pages_count=${pagesData.data?.length || 0}, ` +
+        `pages_with_ig=${pagesWithIG.length}`
+      );
+
       if (pagesWithIG.length > 0) {
-        console.log(
-          `[Instagram Account Discovery] Found ${pagesWithIG.length} account(s) via /me/accounts`
-        );
-        
         for (const page of pagesWithIG) {
           const ig = page.instagram_business_account!;
           discoveredAccounts.push({
@@ -978,6 +1001,133 @@ export async function discoverInstagramAccountsFromSUAT(
       console.warn(
         "[Instagram Account Discovery] /me/accounts failed:",
         error instanceof MetaApiError ? error.message : error
+      );
+    }
+  }
+
+  // ADDITIONAL DIAGNOSTICS: /me, /me/permissions, and client_business_id probing
+  if (discoveredAccounts.length === 0) {
+    try {
+      console.log("[Instagram Account Discovery] Running additional diagnostics");
+
+      // Probe /me for client_business_id
+      const meUrl = new URL(`${facebookGraphBase()}/me`);
+      meUrl.searchParams.set("fields", "id,name,client_business_id");
+      meUrl.searchParams.set("access_token", accessToken);
+
+      const meResponse = await fetch(meUrl.toString());
+      const meData = await handleResponse<{
+        id: string;
+        name?: string;
+        client_business_id?: string;
+      }>(meResponse);
+
+      console.log(
+        `[Instagram Account Discovery] /me: id_length=${meData.id.length}, ` +
+        `has_client_business_id=${!!meData.client_business_id}`
+      );
+
+      // Probe /me/permissions
+      try {
+        const permissionsUrl = new URL(`${facebookGraphBase()}/me/permissions`);
+        permissionsUrl.searchParams.set("access_token", accessToken);
+
+        const permissionsResponse = await fetch(permissionsUrl.toString());
+        const permissionsData = await handleResponse<{
+          data: Array<{ permission: string; status: string }>;
+        }>(permissionsResponse);
+
+        const granted = permissionsData.data.filter((p) => p.status === "granted").map((p) => p.permission);
+        const declined = permissionsData.data.filter((p) => p.status === "declined").map((p) => p.permission);
+
+        console.log(
+          `[Instagram Account Discovery] /me/permissions: granted=[${granted.join(",")}], ` +
+          `declined=[${declined.join(",")}]`
+        );
+      } catch (permError) {
+        console.warn(
+          "[Instagram Account Discovery] /me/permissions failed:",
+          permError instanceof MetaApiError ? permError.message : permError
+        );
+      }
+
+      // Probe client_business_id edges if present
+      if (meData.client_business_id) {
+        const businessId = meData.client_business_id;
+
+        // Probe owned_instagram_accounts
+        try {
+          const ownedUrl = new URL(`${facebookGraphBase()}/${businessId}/owned_instagram_accounts`);
+          ownedUrl.searchParams.set("fields", "id,username");
+          ownedUrl.searchParams.set("access_token", accessToken);
+
+          const ownedResponse = await fetch(ownedUrl.toString());
+          const ownedData = await handleResponse<{
+            data: Array<{ id: string; username: string }>;
+          }>(ownedResponse);
+
+          console.log(
+            `[Instagram Account Discovery] /${businessId}/owned_instagram_accounts returned count=${ownedData.data?.length || 0}`
+          );
+
+          if (ownedData.data && ownedData.data.length > 0) {
+            for (const account of ownedData.data) {
+              discoveredAccounts.push({
+                instagramId: account.id,
+                username: account.username,
+                name: undefined,
+                pageId: null,
+                pageAccessToken: null,
+              });
+            }
+          }
+        } catch (ownedError) {
+          console.warn(
+            `[Instagram Account Discovery] /${businessId}/owned_instagram_accounts failed:`,
+            ownedError instanceof MetaApiError ? ownedError.message : ownedError
+          );
+        }
+
+        // Probe client_instagram_accounts
+        try {
+          const clientUrl = new URL(`${facebookGraphBase()}/${businessId}/client_instagram_accounts`);
+          clientUrl.searchParams.set("fields", "id,username");
+          clientUrl.searchParams.set("access_token", accessToken);
+
+          const clientResponse = await fetch(clientUrl.toString());
+          const clientData = await handleResponse<{
+            data: Array<{ id: string; username: string }>;
+          }>(clientResponse);
+
+          console.log(
+            `[Instagram Account Discovery] /${businessId}/client_instagram_accounts returned count=${clientData.data?.length || 0}`
+          );
+
+          if (clientData.data && clientData.data.length > 0) {
+            for (const account of clientData.data) {
+              // Avoid duplicates from owned_instagram_accounts
+              if (!discoveredAccounts.some((a) => a.instagramId === account.id)) {
+                discoveredAccounts.push({
+                  instagramId: account.id,
+                  username: account.username,
+                  name: undefined,
+                  pageId: null,
+                  pageAccessToken: null,
+                });
+              }
+            }
+          }
+        } catch (clientError) {
+          console.warn(
+            `[Instagram Account Discovery] /${businessId}/client_instagram_accounts failed:`,
+            clientError instanceof MetaApiError ? clientError.message : clientError
+          );
+        }
+      }
+    } catch (diagError) {
+      console.warn(
+        "[Instagram Account Discovery] Additional diagnostics failed:",
+        diagError instanceof MetaApiError ? diagError.message : diagError
       );
     }
   }
