@@ -89,8 +89,8 @@ export async function GET(request: NextRequest) {
         instagramId: account.instagramId,
         username: account.username,
         name: account.name,
-        pageId: account.pageId,
-        pageAccessToken: account.pageAccessToken,
+        pageId: account.pageId ?? undefined,
+        pageAccessToken: account.pageAccessToken ?? undefined,
       });
     } else {
       // Legacy Instagram Login flow
@@ -120,6 +120,14 @@ export async function GET(request: NextRequest) {
     if (authProvider === "FACEBOOK_LOGIN") {
       pageId = instagramAccounts[0].pageId ?? null;
       pageAccessToken = instagramAccounts[0].pageAccessToken ?? null;
+      
+      // Warn if Page info is missing (messaging may not work)
+      if (!pageId || !pageAccessToken) {
+        console.warn(
+          `[Instagram Callback] Connected @${username} without Page association. ` +
+            `Messaging may not work. Check Facebook Login configuration.`
+        );
+      }
     }
 
     const connection = await canConnectInstagramAccount({
@@ -138,13 +146,20 @@ export async function GET(request: NextRequest) {
 
     let webhookSubscribed = false;
     try {
-      const subscription = await subscribeInstagramAccountToWebhooks(
-        instagramId,
-        authProvider === "FACEBOOK_LOGIN" ? pageId! : null,
-        authProvider === "FACEBOOK_LOGIN" ? pageAccessToken! : longLivedToken,
-        authProvider
-      );
-      webhookSubscribed = Boolean(subscription.success);
+      // Only attempt webhook subscription if we have the necessary tokens
+      if (authProvider === "INSTAGRAM_LOGIN" || (pageId && pageAccessToken)) {
+        const subscription = await subscribeInstagramAccountToWebhooks(
+          instagramId,
+          authProvider === "FACEBOOK_LOGIN" ? pageId : null,
+          authProvider === "FACEBOOK_LOGIN" ? pageAccessToken! : longLivedToken,
+          authProvider
+        );
+        webhookSubscribed = Boolean(subscription.success);
+      } else {
+        console.warn(
+          "[Instagram Callback] Skipping webhook subscription - no Page token available"
+        );
+      }
     } catch (subscriptionError) {
       console.warn(
         "[Instagram Callback] Webhook subscription failed:",
