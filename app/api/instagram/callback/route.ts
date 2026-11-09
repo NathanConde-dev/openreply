@@ -55,10 +55,15 @@ export async function GET(request: NextRequest) {
 
     let longLivedToken: string;
     let expiresIn: number;
+    let authProvider: "INSTAGRAM_LOGIN" | "FACEBOOK_LOGIN";
+    let pageId: string | null = null;
+    let pageAccessToken: string | null = null;
     const instagramAccounts: Array<{
       instagramId: string;
       username: string;
       name?: string;
+      pageId?: string;
+      pageAccessToken?: string;
     }> = [];
 
     if (isMetaUnifiedLoginEnabled()) {
@@ -66,8 +71,9 @@ export async function GET(request: NextRequest) {
       // According to Meta docs, SUATs with "Never" expiration don't expire
       longLivedToken = shortLivedToken;
       expiresIn = 0; // Will be stored as null (no expiration)
+      authProvider = "FACEBOOK_LOGIN";
 
-      // Discover Instagram accounts granted to this SUAT
+      // Discover Instagram accounts granted to this SUAT via debug_token
       const discoveredAccounts = await discoverInstagramAccountsFromSUAT(longLivedToken);
       
       if (discoveredAccounts.length === 0) {
@@ -80,9 +86,11 @@ export async function GET(request: NextRequest) {
       // TODO: In the future, we could show a UI to let users choose which account to connect
       const account = discoveredAccounts[0];
       instagramAccounts.push({
-        instagramId: account.user_id ?? account.id,
+        instagramId: account.instagramId,
         username: account.username,
         name: account.name,
+        pageId: account.pageId,
+        pageAccessToken: account.pageAccessToken,
       });
     } else {
       // Legacy Instagram Login flow
@@ -90,6 +98,7 @@ export async function GET(request: NextRequest) {
         await getLongLivedToken(shortLivedToken);
       longLivedToken = token;
       expiresIn = expires;
+      authProvider = "INSTAGRAM_LOGIN";
 
       const userInfo = await getUserInfo(longLivedToken);
       // Webhooks and the messaging API key off the professional account ID
@@ -106,6 +115,12 @@ export async function GET(request: NextRequest) {
 
     // Process the discovered account(s) - for now just the first one
     const { instagramId, username, name } = instagramAccounts[0];
+    
+    // For Facebook Login, extract and store Page credentials
+    if (authProvider === "FACEBOOK_LOGIN") {
+      pageId = instagramAccounts[0].pageId ?? null;
+      pageAccessToken = instagramAccounts[0].pageAccessToken ?? null;
+    }
 
     const connection = await canConnectInstagramAccount({
       workspaceId: state.workspaceId,
@@ -125,7 +140,9 @@ export async function GET(request: NextRequest) {
     try {
       const subscription = await subscribeInstagramAccountToWebhooks(
         instagramId,
-        longLivedToken
+        authProvider === "FACEBOOK_LOGIN" ? pageId! : null,
+        authProvider === "FACEBOOK_LOGIN" ? pageAccessToken! : longLivedToken,
+        authProvider
       );
       webhookSubscribed = Boolean(subscription.success);
     } catch (subscriptionError) {
@@ -138,6 +155,9 @@ export async function GET(request: NextRequest) {
     const data = {
       username,
       name,
+      authProvider,
+      pageId: pageId ? encryptToken(pageId) : null,
+      pageAccessToken: pageAccessToken ? encryptToken(pageAccessToken) : null,
       accessToken: encryptedToken,
       tokenExpiresAt,
       webhookSubscribed,
