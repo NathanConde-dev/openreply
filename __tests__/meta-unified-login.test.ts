@@ -175,13 +175,15 @@ describe("Meta Unified Login", () => {
       expect(accounts[0].username).toBe("test_user");
       expect(accounts[1].instagramId).toBe("ig-account-456");
       
-      // Verify /me/assigned_instagram_accounts was called first
-      const firstCall = fetchMock.mock.calls[0][0];
-      expect(firstCall).toContain("/me/assigned_instagram_accounts");
-      expect(firstCall).toContain("fields=id%2Cusername%2Cname");
+      // Verify /me/assigned_instagram_accounts was called with Bearer auth
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall[0]).toContain("/me/assigned_instagram_accounts");
+      expect(firstCall[0]).toContain("fields=id%2Cusername%2Cname");
+      expect(firstCall[0]).not.toContain("access_token=");
+      expect(firstCall[1]?.headers?.Authorization).toBe("Bearer user-token-123");
     });
 
-    it("should paginate /me/assigned_instagram_accounts", async () => {
+    it("should paginate /me/assigned_instagram_accounts using cursors with Bearer auth", async () => {
       const userToken = "user-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
@@ -194,7 +196,9 @@ describe("Meta Unified Login", () => {
             { id: "ig-1", username: "user1", name: "User 1" },
           ],
           paging: {
-            next: "https://graph.facebook.com/v25.0/me/assigned_instagram_accounts?after=cursor1",
+            cursors: {
+              after: "cursor-abc123",
+            },
           },
         }),
       });
@@ -224,6 +228,18 @@ describe("Meta Unified Login", () => {
       expect(accounts).toHaveLength(2);
       expect(accounts[0].instagramId).toBe("ig-1");
       expect(accounts[1].instagramId).toBe("ig-2");
+
+      // Verify first request uses Bearer auth
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall[0]).toContain("/me/assigned_instagram_accounts");
+      expect(firstCall[0]).not.toContain("access_token=");
+      expect(firstCall[1]?.headers?.Authorization).toBe("Bearer user-token-123");
+
+      // Verify second request uses cursor with Bearer auth
+      const secondCall = fetchMock.mock.calls[1];
+      expect(secondCall[0]).toContain("after=cursor-abc123");
+      expect(secondCall[0]).not.toContain("access_token=");
+      expect(secondCall[1]?.headers?.Authorization).toBe("Bearer user-token-123");
     });
 
     it("should soft-fail profile_picture_url and followers_count", async () => {

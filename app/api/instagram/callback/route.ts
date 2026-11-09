@@ -146,20 +146,21 @@ export async function GET(request: NextRequest) {
 
     let webhookSubscribed = false;
     try {
-      // Only attempt webhook subscription if we have the necessary tokens
-      if (authProvider === "INSTAGRAM_LOGIN" || (pageId && pageAccessToken)) {
-        const subscription = await subscribeInstagramAccountToWebhooks(
-          instagramId,
-          authProvider === "FACEBOOK_LOGIN" ? pageId : null,
-          authProvider === "FACEBOOK_LOGIN" ? pageAccessToken! : longLivedToken,
-          authProvider
-        );
-        webhookSubscribed = Boolean(subscription.success);
-      } else {
-        console.warn(
-          "[Instagram Callback] Skipping webhook subscription - no Page token available"
-        );
-      }
+      // Subscribe webhooks:
+      // - INSTAGRAM_LOGIN: use /{ig-id}/subscribed_apps with user token
+      // - FACEBOOK_LOGIN with Page: use /{page-id}/subscribed_apps with Page token
+      // - FACEBOOK_LOGIN without Page: use /{ig-id}/subscribed_apps with SUAT
+      const tokenForWebhook = authProvider === "FACEBOOK_LOGIN" && pageAccessToken 
+        ? pageAccessToken 
+        : longLivedToken;
+      
+      const subscription = await subscribeInstagramAccountToWebhooks(
+        instagramId,
+        authProvider === "FACEBOOK_LOGIN" ? pageId : null,
+        tokenForWebhook,
+        authProvider
+      );
+      webhookSubscribed = Boolean(subscription.success);
     } catch (subscriptionError) {
       console.warn(
         "[Instagram Callback] Webhook subscription failed:",

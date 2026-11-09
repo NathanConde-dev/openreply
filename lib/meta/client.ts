@@ -782,23 +782,35 @@ export async function discoverInstagramAccountsFromSUAT(
   try {
     console.log("[Instagram Account Discovery] Trying /me/assigned_instagram_accounts");
     
-    const firstUrl = new URL(`${facebookGraphBase()}/me/assigned_instagram_accounts`);
-    firstUrl.searchParams.set("fields", "id,username,name");
-    firstUrl.searchParams.set("limit", "50");
-    firstUrl.searchParams.set("access_token", accessToken);
-
-    let nextUrl: string | null = firstUrl.toString();
     const igAccountIds: Array<{ id: string; username: string; name?: string }> = [];
+    let cursor: string | null = null;
 
-    while (nextUrl && igAccountIds.length < 100) {
-      const response: Response = await fetch(nextUrl);
+    while (igAccountIds.length < 100) {
+      const url = new URL(`${facebookGraphBase()}/me/assigned_instagram_accounts`);
+      url.searchParams.set("fields", "id,username,name");
+      url.searchParams.set("limit", "50");
+      if (cursor) {
+        url.searchParams.set("after", cursor);
+      }
+
+      const response: Response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      
       const data: {
         data: Array<{ id: string; username: string; name?: string }>;
-        paging?: { next?: string };
+        paging?: { cursors?: { after?: string } };
       } = await handleResponse(response);
 
       igAccountIds.push(...(data.data || []));
-      nextUrl = data.paging?.next ?? null;
+      
+      // Extract cursor for next page, don't follow raw paging.next URLs with embedded tokens
+      cursor = data.paging?.cursors?.after ?? null;
+      if (!cursor || data.data.length === 0) {
+        break;
+      }
     }
 
     if (igAccountIds.length > 0) {
