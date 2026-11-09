@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { getAuthorizationUrl, exchangeCodeForToken } from "@/lib/meta/oauth";
-import { discoverInstagramAccountsFromSUAT } from "@/lib/meta/client";
+import {
+  discoverInstagramAccountsFromSUAT,
+  sendPrivateReply,
+  sendDirectMessage,
+  subscribeInstagramAccountToWebhooks,
+} from "@/lib/meta/client";
 
 describe("Meta Unified Login", () => {
   const originalEnv = process.env;
@@ -129,10 +134,144 @@ describe("Meta Unified Login", () => {
       process.env.META_GRAPH_API_VERSION = "v25.0";
     });
 
-    it("should use app access token for debug_token call", async () => {
+    it("should use /me/assigned_instagram_accounts as primary discovery method", async () => {
       const userToken = "user-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
+
+      // Mock /me/assigned_instagram_accounts response
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: "ig-account-123", username: "test_user", name: "Test User" },
+            { id: "ig-account-456", username: "test_user2", name: "Test User 2" },
+          ],
+        }),
+      });
+
+      // Mock profile details for first account (profile_picture_url, followers_count)
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          profile_picture_url: "https://example.com/pic1.jpg",
+          followers_count: 1000,
+        }),
+      });
+
+      // Mock profile details for second account
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          profile_picture_url: "https://example.com/pic2.jpg",
+          followers_count: 2000,
+        }),
+      });
+
+      const accounts = await discoverInstagramAccountsFromSUAT(userToken);
+
+      expect(accounts).toHaveLength(2);
+      expect(accounts[0].instagramId).toBe("ig-account-123");
+      expect(accounts[0].username).toBe("test_user");
+      expect(accounts[1].instagramId).toBe("ig-account-456");
+      
+      // Verify /me/assigned_instagram_accounts was called first
+      const firstCall = fetchMock.mock.calls[0][0];
+      expect(firstCall).toContain("/me/assigned_instagram_accounts");
+      expect(firstCall).toContain("fields=id%2Cusername%2Cname");
+    });
+
+    it("should paginate /me/assigned_instagram_accounts", async () => {
+      const userToken = "user-token-123";
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      // First page
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: "ig-1", username: "user1", name: "User 1" },
+          ],
+          paging: {
+            next: "https://graph.facebook.com/v25.0/me/assigned_instagram_accounts?after=cursor1",
+          },
+        }),
+      });
+
+      // Second page
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: "ig-2", username: "user2", name: "User 2" },
+          ],
+        }),
+      });
+
+      // Profile details for both accounts
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      });
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      });
+
+      const accounts = await discoverInstagramAccountsFromSUAT(userToken);
+
+      expect(accounts).toHaveLength(2);
+      expect(accounts[0].instagramId).toBe("ig-1");
+      expect(accounts[1].instagramId).toBe("ig-2");
+    });
+
+    it("should soft-fail profile_picture_url and followers_count", async () => {
+      const userToken = "user-token-123";
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      // Mock /me/assigned_instagram_accounts response
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: "ig-account-123", username: "test_user", name: "Test User" },
+          ],
+        }),
+      });
+
+      // Mock profile details failing (e.g., field not accessible)
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: {
+            message: "(#100) Tried accessing nonexisting field (profile_picture_url)",
+            type: "OAuthException",
+            code: 100,
+          },
+        }),
+      });
+
+      const accounts = await discoverInstagramAccountsFromSUAT(userToken);
+
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0].instagramId).toBe("ig-account-123");
+      expect(accounts[0].username).toBe("test_user");
+    });
+
+    it("should use app access token for debug_token when /me/assigned_instagram_accounts fails", async () => {
+      const userToken = "user-token-123";
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      // Mock /me/assigned_instagram_accounts failure
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: { message: "Permission denied" },
+        }),
+      });
 
       // Mock debug_token response
       fetchMock.mockResolvedValueOnce({
@@ -149,21 +288,7 @@ describe("Meta Unified Login", () => {
         }),
       });
 
-      // Mock /me/accounts response
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: [
-            {
-              id: "page-123",
-              access_token: "page-token-123",
-              instagram_business_account: { id: "ig-account-123" },
-            },
-          ],
-        }),
-      });
-
-      // Mock IG account details response
+      // Mock IG account profile
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -176,16 +301,24 @@ describe("Meta Unified Login", () => {
       await discoverInstagramAccountsFromSUAT(userToken);
 
       // Verify debug_token was called with app access token
-      const debugTokenCall = fetchMock.mock.calls[0][0];
+      const debugTokenCall = fetchMock.mock.calls[1][0];
       expect(debugTokenCall).toContain("/debug_token");
       expect(debugTokenCall).toContain("input_token=user-token-123");
       expect(debugTokenCall).toContain("access_token=test-app-id%7Ctest-app-secret");
     });
 
-    it("should fall back to instagram_manage_messages if instagram_basic has no target_ids", async () => {
+    it("should fall back to instagram_manage_messages scope when instagram_basic has no target_ids", async () => {
       const userToken = "user-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
+
+      // Mock /me/assigned_instagram_accounts failure
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: { message: "No accounts" },
+        }),
+      });
 
       // Mock debug_token response with only instagram_manage_messages
       fetchMock.mockResolvedValueOnce({
@@ -206,21 +339,7 @@ describe("Meta Unified Login", () => {
         }),
       });
 
-      // Mock /me/accounts response
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: [
-            {
-              id: "page-456",
-              access_token: "page-token-456",
-              instagram_business_account: { id: "ig-account-456" },
-            },
-          ],
-        }),
-      });
-
-      // Mock IG account details response
+      // Mock IG account profile (base fields) - called by granular_scopes loop
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -234,12 +353,25 @@ describe("Meta Unified Login", () => {
 
       expect(accounts).toHaveLength(1);
       expect(accounts[0].instagramId).toBe("ig-account-456");
+      expect(accounts[0].username).toBe("test_user2");
+      
+      // Verify it used instagram_manage_messages target_ids
+      const debugTokenCall = fetchMock.mock.calls[1][0] as string;
+      expect(debugTokenCall).toContain("/debug_token");
     });
 
-    it("should fall back to /me/accounts if debug_token fails", async () => {
+    it("should fall back to /me/accounts if assigned_instagram_accounts and debug_token fail", async () => {
       const userToken = "user-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
+
+      // Mock /me/assigned_instagram_accounts failure
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: { message: "No accounts" },
+        }),
+      });
 
       // Mock debug_token failure
       fetchMock.mockResolvedValueOnce({
@@ -267,72 +399,33 @@ describe("Meta Unified Login", () => {
         }),
       });
 
-      // Mock IG account details (called before Page lookup in the loop)
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          id: "ig-account-789",
-          username: "fallback_user",
-          name: "Fallback User",
-        }),
-      });
-
-      // Mock /me/accounts for Page lookup
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: [
-            {
-              id: "page-789",
-              access_token: "page-token-789",
-              instagram_business_account: { id: "ig-account-789" },
-            },
-          ],
-        }),
-      });
-
       const accounts = await discoverInstagramAccountsFromSUAT(userToken);
 
       expect(accounts).toHaveLength(1);
       expect(accounts[0].username).toBe("fallback_user");
+      expect(accounts[0].pageId).toBe("page-789");
+      expect(accounts[0].pageAccessToken).toBe("page-token-789");
     });
 
-    it("should save account even if Page is not found", async () => {
-      const userToken = "user-token-123";
+    it("should discover accounts without Page tokens (SUAT with IG asset only)", async () => {
+      const userToken = "suat-token-123";
       const fetchMock = vi.fn();
       global.fetch = fetchMock;
 
-      // Mock debug_token response
+      // Mock /me/assigned_instagram_accounts (primary for SUAT)
       fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          data: {
-            granular_scopes: [
-              {
-                scope: "instagram_basic",
-                target_ids: ["ig-account-no-page"],
-              },
-            ],
-          },
+          data: [
+            { id: "ig-no-page", username: "no_page_user", name: "No Page User" },
+          ],
         }),
       });
 
-      // Mock IG account details (called before Page lookup)
+      // Mock profile details (soft-fail okay)
       fetchMock.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          id: "ig-account-no-page",
-          username: "no_page_user",
-          name: "No Page User",
-        }),
-      });
-
-      // Mock /me/accounts with no matching Page
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: [],
-        }),
+        json: async () => ({}),
       });
 
       const accounts = await discoverInstagramAccountsFromSUAT(userToken);
@@ -341,6 +434,152 @@ describe("Meta Unified Login", () => {
       expect(accounts[0].username).toBe("no_page_user");
       expect(accounts[0].pageId).toBeNull();
       expect(accounts[0].pageAccessToken).toBeNull();
+    });
+
+    it("should NOT fall back to /me (system user ID is not an IG account)", async () => {
+      const userToken = "suat-token-123";
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      // All discovery methods fail
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: { message: "No assigned accounts" },
+        }),
+      });
+
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: { message: "debug_token failed" },
+        }),
+      });
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [],
+        }),
+      });
+
+      await expect(
+        discoverInstagramAccountsFromSUAT(userToken)
+      ).rejects.toThrow("No Instagram Business accounts found");
+
+      // Verify /me was NOT called (no call to /me?fields=id)
+      const calls = fetchMock.mock.calls.map((call) => call[0] as string);
+      expect(calls.some((url) => url.includes("/me?"))).toBe(false);
+    });
+  });
+
+  describe("Messaging without Page token (FACEBOOK_LOGIN with SUAT)", () => {
+    beforeEach(() => {
+      process.env.META_GRAPH_API_VERSION = "v25.0";
+    });
+
+    it("should send private reply via /{ig-user-id}/messages when pageId is null", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          recipient_id: "recipient-123",
+          message_id: "msg-123",
+        }),
+      });
+
+      await sendPrivateReply(
+        "suat-token",
+        "ig-account-no-page",
+        "comment-123",
+        "Hello from SUAT",
+        "FACEBOOK_LOGIN",
+        null // No Page
+      );
+
+      const call = fetchMock.mock.calls[0];
+      expect(call[0]).toContain("graph.facebook.com");
+      expect(call[0]).toContain("/ig-account-no-page/messages");
+      expect(call[0]).not.toContain("/page-");
+    });
+
+    it("should send direct message via /{ig-user-id}/messages when pageId is null", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          recipient_id: "user-456",
+          message_id: "msg-456",
+        }),
+      });
+
+      await sendDirectMessage(
+        "suat-token",
+        "ig-account-no-page",
+        "user-456",
+        "Direct message from SUAT",
+        "FACEBOOK_LOGIN",
+        null
+      );
+
+      const call = fetchMock.mock.calls[0];
+      expect(call[0]).toContain("graph.facebook.com");
+      expect(call[0]).toContain("/ig-account-no-page/messages");
+    });
+
+    it("should subscribe webhooks via /{ig-user-id}/subscribed_apps when pageId is null", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+        }),
+      });
+
+      await subscribeInstagramAccountToWebhooks(
+        "ig-account-no-page",
+        null, // No Page
+        "suat-token",
+        "FACEBOOK_LOGIN"
+      );
+
+      const call = fetchMock.mock.calls[0];
+      expect(call[0]).toContain("graph.facebook.com");
+      expect(call[0]).toContain("/ig-account-no-page/subscribed_apps");
+      expect(call[0]).not.toContain("/page-");
+    });
+
+    it("should use Page ID when available", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock;
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          recipient_id: "recipient-789",
+          message_id: "msg-789",
+        }),
+      });
+
+      await sendPrivateReply(
+        "page-token",
+        "ig-account-with-page",
+        "comment-789",
+        "Hello from Page",
+        "FACEBOOK_LOGIN",
+        "page-123"
+      );
+
+      const call = fetchMock.mock.calls[0];
+      expect(call[0]).toContain("graph.facebook.com");
+      expect(call[0]).toContain("/page-123/messages");
+      expect(call[0]).not.toContain("/ig-account-");
     });
   });
 });
