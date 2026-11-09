@@ -235,13 +235,15 @@ ALLOWED_EMAILS=seu@email.com,outro@email.com
 
 ```bash
 # Build
-npm ci
+npm ci                 # usa .npmrc (legacy-peer-deps=true) para resolver peer deps
 npm run build          # = prisma generate && next build
 npx prisma migrate deploy
 
 # Start
 npm run start          # = next start (porta $PORT)
 ```
+
+**Nota sobre peer dependencies:** O projeto usa `.npmrc` com `legacy-peer-deps=true` para resolver conflitos de peer dependencies entre nodemailer 10.4.0 (corrigida vulnerabilidade crítica) e next-auth beta.32. Isso é necessário no node:20-slim (npm 10) usado no Dockerfile.
 
 ### Worker
 
