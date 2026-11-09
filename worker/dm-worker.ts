@@ -2,6 +2,8 @@ import { createDMWorker } from "@/lib/queue/dm-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
+import { scheduleTokenRefresh } from "./token-refresh-job";
+import { getDMQueue } from "@/lib/queue/client";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -14,6 +16,11 @@ const POLL_INTERVAL_MS = Number(
 );
 
 console.log("[DM Worker] Started");
+
+// Schedule token refresh job (runs daily at 3 AM UTC)
+void scheduleTokenRefresh(getDMQueue()).catch((error) => {
+  console.error("[DM Worker] Failed to schedule token refresh:", error);
+});
 
 async function heartbeat() {
   try {

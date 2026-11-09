@@ -1119,8 +1119,8 @@ describe("DM Worker — DM keyword trigger", () => {
       "decrypted_token",
       "ig_456",
       "commenter_999",
-      expect.any(String),
-      "I'm following ✅",
+      "Quase lá! Me segue e toca no botão abaixo pra pegar seu link 💛",
+      "Já segui ✅",
       "followcheck:auto_789"
     );
     expect(mockSendDirectMessage).not.toHaveBeenCalled();

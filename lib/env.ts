@@ -82,6 +82,10 @@ export async function isPublicDemoHost(): Promise<boolean> {
  * account gets its own workspace. ALLOWED_EMAILS closes it to a comma-separated
  * list of addresses. Left unset, sign-in behaves exactly as before, so an
  * existing deployment is unaffected.
+ * 
+ * In production (NODE_ENV=production), if ALLOWED_EMAILS is empty, login is
+ * blocked to prevent open signup on public deployments. Set ALLOWED_EMAILS
+ * to a comma-separated list of allowed email addresses.
  */
 export function isEmailAllowedToSignIn(
   email: string | null | undefined
@@ -91,7 +95,23 @@ export function isEmailAllowedToSignIn(
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
-  if (allowed.length === 0) return true;
+  // In production, require ALLOWED_EMAILS to be set
+  if (allowed.length === 0) {
+    const isProduction = process.env.NODE_ENV === "production";
+    if (isProduction) {
+      console.error(
+        "[Auth] ALLOWED_EMAILS is empty in production - login blocked. " +
+        "Set ALLOWED_EMAILS to a comma-separated list of allowed email addresses."
+      );
+      return false;
+    }
+    console.warn(
+      "[Auth] ALLOWED_EMAILS is not set - allowing all email addresses. " +
+      "This is only safe in development. In production, set ALLOWED_EMAILS."
+    );
+    return true;
+  }
+  
   if (!email) return false;
   return allowed.includes(email.toLowerCase());
 }
