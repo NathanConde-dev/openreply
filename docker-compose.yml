@@ -1,35 +1,161 @@
-# OpenReply — Local Development Services
-# Run: docker-compose up -d
+version: '3.8'
 
 services:
+  # PostgreSQL - banco de dados principal
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: openreply
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-openreply}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-openreply}']
+      interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - openreply-internal
 
+  # Redis - fila de jobs
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    command: redis-server --appendonly yes
     volumes:
-      - redisdata:/data
+      - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - openreply-internal
+
+  # Web - servidor Next.js (API + frontend)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openreply}:${POSTGRES_PASSWORD}@postgres:5432/openreply
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?Defina NEXTAUTH_URL no .env}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Defina NEXTAUTH_SECRET no .env}
+      CRON_SECRET: ${CRON_SECRET:-${NEXTAUTH_SECRET}}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Defina ENCRYPTION_KEY no .env}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:?Defina ALLOWED_EMAILS no .env}
+      INSTAGRAM_APP_ID: ${INSTAGRAM_APP_ID:?Defina INSTAGRAM_APP_ID no .env}
+      INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET:?Defina INSTAGRAM_APP_SECRET no .env}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-${INSTAGRAM_APP_SECRET}}
+      WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?Defina WEBHOOK_VERIFY_TOKEN no .env}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v25.0}
+      # Email (Resend ou SMTP)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_SERVER: ${EMAIL_SERVER:-}
+      EMAIL_FROM: ${EMAIL_FROM:?Defina EMAIL_FROM no .env}
+      # Opcionais
+      COMMENT_POLL_INTERVAL_MS: ${COMMENT_POLL_INTERVAL_MS:-300000}
+      HEALTH_STUCK_QUEUE_WAITING: ${HEALTH_STUCK_QUEUE_WAITING:-25}
+      FOLLOW_RECHECK_DELAYS_MS: ${FOLLOW_RECHECK_DELAYS_MS:-20000,40000}
+      FOLLOW_RECHECK_ACK_MESSAGE: ${FOLLOW_RECHECK_ACK_MESSAGE:-}
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - openreply-internal
+      - openreply-public
+    labels:
+      - 'com.centurylinklabs.watchtower.enable=true'
+
+  # Worker - processa DMs, renovação de tokens e snapshots
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ['npm', 'run', 'worker']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-openreply}:${POSTGRES_PASSWORD}@postgres:5432/openreply
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Defina NEXTAUTH_SECRET no .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Defina ENCRYPTION_KEY no .env}
+      INSTAGRAM_APP_ID: ${INSTAGRAM_APP_ID:?Defina INSTAGRAM_APP_ID no .env}
+      INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET:?Defina INSTAGRAM_APP_SECRET no .env}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-${INSTAGRAM_APP_SECRET}}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v25.0}
+      COMMENT_POLL_INTERVAL_MS: ${COMMENT_POLL_INTERVAL_MS:-300000}
+      FOLLOW_RECHECK_DELAYS_MS: ${FOLLOW_RECHECK_DELAYS_MS:-20000,40000}
+      FOLLOW_RECHECK_ACK_MESSAGE: ${FOLLOW_RECHECK_ACK_MESSAGE:-}
+    healthcheck:
+      test: ['CMD-SHELL', 'pgrep -f "tsx worker/dm-worker.ts" || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - openreply-internal
+    labels:
+      - 'com.centurylinklabs.watchtower.enable=true'
+
+  # Caddy - reverse proxy com HTTPS automático (opcional)
+  # Descomente as linhas abaixo para habilitar
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - '80:80'
+  #     - '443:443'
+  #     - '443:443/udp'  # HTTP/3
+  #   environment:
+  #     DOMAIN: ${DOMAIN:?Defina DOMAIN no .env para usar Caddy}
+  #     EMAIL: ${ACME_EMAIL:?Defina ACME_EMAIL no .env para certificados}
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - web
+  #   networks:
+  #     - openreply-public
+  #   labels:
+  #     - 'com.centurylinklabs.watchtower.enable=true'
 
 volumes:
-  pgdata:
-  redisdata:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  # caddy_data:
+  #   driver: local
+  # caddy_config:
+  #   driver: local
+
+networks:
+  # Rede interna (Postgres, Redis, worker não são acessíveis externamente)
+  openreply-internal:
+    driver: bridge
+  # Rede pública (apenas web e opcionalmente Caddy)
+  openreply-public:
+    driver: bridge

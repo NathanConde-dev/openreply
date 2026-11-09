@@ -1,0 +1,29 @@
+{$DOMAIN} {
+    # HTTPS automático via Let's Encrypt
+    # Certifique-se de que as portas 80 e 443 estejam abertas no firewall
+    
+    # Proxy reverso para o serviço web
+    reverse_proxy web:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Logs
+    log {
+        output file /data/access.log
+        format json
+    }
+
+    # Compressão
+    encode gzip zstd
+
+    # Headers de segurança
+    header {
+        # Strict-Transport-Security já é adicionado automaticamente pelo Caddy
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
