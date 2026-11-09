@@ -8,6 +8,32 @@ function facebookGraphBase() {
   return `https://graph.facebook.com/${getMetaGraphApiVersion()}`;
 }
 
+type AuthProvider = "INSTAGRAM_LOGIN" | "FACEBOOK_LOGIN";
+
+interface ApiConfig {
+  baseUrl: string;
+  authProvider: AuthProvider;
+  // For Facebook Login, some operations need the Page ID
+  pageId?: string;
+}
+
+function getApiConfig(
+  authProvider: AuthProvider,
+  pageId?: string | null
+): ApiConfig {
+  if (authProvider === "FACEBOOK_LOGIN") {
+    return {
+      baseUrl: facebookGraphBase(),
+      authProvider: "FACEBOOK_LOGIN",
+      pageId: pageId ?? undefined,
+    };
+  }
+  return {
+    baseUrl: instagramGraphBase(),
+    authProvider: "INSTAGRAM_LOGIN",
+  };
+}
+
 export class MetaApiError extends Error {
   constructor(
     public code: number,
@@ -165,22 +191,29 @@ export async function sendPrivateReply(
   accessToken: string,
   instagramAccountId: string,
   commentId: string,
-  message: string
+  message: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { comment_id: commentId },
-        message: { text: message },
-      }),
-    }
-  );
+  const config = getApiConfig(authProvider, pageId);
+  
+  // For Facebook Login, use /{page-id}/messages
+  // For Instagram Login, use /{ig-account-id}/messages
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: { text: message },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -197,34 +230,39 @@ export async function sendPrivateReplyWithButton(
   commentId: string,
   text: string,
   buttonTitle: string,
-  payload: string
+  payload: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { comment_id: commentId },
-        message: {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "button",
-              // Button template text is capped at 640 chars by Meta.
-              text: text.slice(0, 640),
-              buttons: [
-                { type: "postback", title: buttonTitle.slice(0, 20), payload },
-              ],
-            },
+  const config = getApiConfig(authProvider, pageId);
+  
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            // Button template text is capped at 640 chars by Meta.
+            text: text.slice(0, 640),
+            buttons: [
+              { type: "postback", title: buttonTitle.slice(0, 20), payload },
+            ],
           },
         },
-      }),
-    }
-  );
+      },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -240,33 +278,38 @@ export async function sendDirectMessageWithButton(
   userId: string,
   text: string,
   buttonTitle: string,
-  payload: string
+  payload: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { id: userId },
-        message: {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "button",
-              text: text.slice(0, 640),
-              buttons: [
-                { type: "postback", title: buttonTitle.slice(0, 20), payload },
-              ],
-            },
+  const config = getApiConfig(authProvider, pageId);
+  
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { id: userId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            text: text.slice(0, 640),
+            buttons: [
+              { type: "postback", title: buttonTitle.slice(0, 20), payload },
+            ],
           },
         },
-      }),
-    }
-  );
+      },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -280,9 +323,11 @@ export async function sendDirectMessageWithButton(
  */
 export async function getUserFollowStatus(
   accessToken: string,
-  recipientId: string
+  recipientId: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<boolean | null> {
-  const url = new URL(`${instagramGraphBase()}/${recipientId}`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/${recipientId}`);
   url.searchParams.set("fields", "is_user_follow_business");
 
   try {
@@ -311,9 +356,11 @@ export async function getUserFollowStatus(
  */
 export async function getUserUsername(
   accessToken: string,
-  recipientId: string
+  recipientId: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<string | null> {
-  const url = new URL(`${instagramGraphBase()}/${recipientId}`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/${recipientId}`);
   url.searchParams.set("fields", "username");
 
   try {
@@ -356,31 +403,36 @@ export async function sendPrivateReplyWithLinkButton(
   instagramAccountId: string,
   commentId: string,
   text: string,
-  buttons: LinkButton[]
+  buttons: LinkButton[],
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { comment_id: commentId },
-        message: {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "button",
-              text: text.slice(0, 640),
-              buttons: toWebUrlButtons(buttons),
-            },
+  const config = getApiConfig(authProvider, pageId);
+  
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            text: text.slice(0, 640),
+            buttons: toWebUrlButtons(buttons),
           },
         },
-      }),
-    }
-  );
+      },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -393,22 +445,27 @@ export async function sendDirectMessage(
   accessToken: string,
   instagramAccountId: string,
   userId: string,
-  message: string
+  message: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { id: userId },
-        message: { text: message },
-      }),
-    }
-  );
+  const config = getApiConfig(authProvider, pageId);
+  
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { id: userId },
+      message: { text: message },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -422,31 +479,36 @@ export async function sendDirectMessageWithLinkButton(
   instagramAccountId: string,
   userId: string,
   text: string,
-  buttons: LinkButton[]
+  buttons: LinkButton[],
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN",
+  pageId?: string | null
 ): Promise<{ recipient_id: string; message_id: string }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        recipient: { id: userId },
-        message: {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "button",
-              text: text.slice(0, 640),
-              buttons: toWebUrlButtons(buttons),
-            },
+  const config = getApiConfig(authProvider, pageId);
+  
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/messages`
+    : `${config.baseUrl}/${instagramAccountId}/messages`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { id: userId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            text: text.slice(0, 640),
+            buttons: toWebUrlButtons(buttons),
           },
         },
-      }),
-    }
-  );
+      },
+    }),
+  });
 
   return handleResponse(response);
 }
@@ -454,10 +516,12 @@ export async function sendDirectMessageWithLinkButton(
 export async function sendCommentReply(
   accessToken: string,
   commentId: string,
-  message: string
+  message: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<{ id: string }> {
+  const config = getApiConfig(authProvider);
   const response = await fetch(
-    `${instagramGraphBase()}/${commentId}/replies`,
+    `${config.baseUrl}/${commentId}/replies`,
     {
       method: "POST",
       headers: {
@@ -473,9 +537,11 @@ export async function sendCommentReply(
 
 export async function getMediaComments(
   accessToken: string,
-  mediaId: string
+  mediaId: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramComment[]> {
-  const url = new URL(`${instagramGraphBase()}/${mediaId}/comments`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/${mediaId}/comments`);
   url.searchParams.set("fields", "id,text,from,timestamp");
   url.searchParams.set("access_token", accessToken);
 
@@ -499,11 +565,13 @@ export async function getRecentMediaComments(
   accessToken: string,
   mediaId: string,
   sinceMs: number,
-  max = 800
+  max = 800,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramComment[]> {
+  const config = getApiConfig(authProvider);
   const results: InstagramComment[] = [];
 
-  const first = new URL(`${instagramGraphBase()}/${mediaId}/comments`);
+  const first = new URL(`${config.baseUrl}/${mediaId}/comments`);
   first.searchParams.set("fields", "id,text,timestamp,from,replies{from}");
   first.searchParams.set("order", "reverse_chronological");
   first.searchParams.set("limit", "50");
@@ -566,8 +634,10 @@ export interface InstagramConversation {
  */
 export async function getConversations(
   accessToken: string,
-  igUserId: string
+  igUserId: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramConversation[]> {
+  const config = getApiConfig(authProvider);
   const fields =
     "participants,updated_time,messages.limit(1){message,from,created_time}";
   type Page = {
@@ -583,7 +653,7 @@ export async function getConversations(
   async function readPage(limit: number, requestedFields: string): Promise<Page> {
     // Never follow Meta's next URL: rebuild on our trusted host and carry the
     // token separately. A messages.paging cursor must never advance this list.
-    const url = new URL(`${instagramGraphBase()}/${igUserId}/conversations`);
+    const url = new URL(`${config.baseUrl}/${igUserId}/conversations`);
     url.searchParams.set("platform", "instagram");
     url.searchParams.set("fields", requestedFields);
     url.searchParams.set("limit", String(limit));
@@ -651,9 +721,11 @@ export async function getConversations(
  */
 export async function getConversationMessages(
   accessToken: string,
-  conversationId: string
+  conversationId: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramMessage[]> {
-  const url = new URL(`${instagramGraphBase()}/${conversationId}`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/${conversationId}`);
   url.searchParams.set("fields", "messages{id,created_time,from,to,message}");
   url.searchParams.set("access_token", accessToken);
 
@@ -664,8 +736,12 @@ export async function getConversationMessages(
   return data.messages?.data ?? [];
 }
 
-export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
-  const url = new URL(`${instagramGraphBase()}/me`);
+export async function getUserInfo(
+  accessToken: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
+): Promise<InstagramUser> {
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/me`);
   url.searchParams.set(
     "fields",
     "id,user_id,username,name,profile_picture_url,followers_count"
@@ -676,6 +752,108 @@ export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
   return handleResponse<InstagramUser>(response);
 }
 
+interface DiscoveredAccount {
+  instagramId: string;
+  username: string;
+  name?: string;
+  pageId: string;
+  pageAccessToken: string;
+}
+
+/**
+ * Discover Instagram Business accounts granted to a Meta Unified Login SUAT.
+ * Uses debug_token's granular_scopes to reliably find granted IG account IDs,
+ * then fetches Page associations and generates Page access tokens.
+ */
+export async function discoverInstagramAccountsFromSUAT(
+  accessToken: string
+): Promise<DiscoveredAccount[]> {
+  // Use debug_token to get granular_scopes with target_ids for instagram_basic
+  // This is the most reliable way to discover which IG accounts were granted
+  const debugUrl = new URL(`${facebookGraphBase()}/debug_token`);
+  debugUrl.searchParams.set("input_token", accessToken);
+  debugUrl.searchParams.set("access_token", accessToken);
+
+  const debugResponse = await fetch(debugUrl.toString());
+  const debugData = await handleResponse<{
+    data: {
+      granular_scopes?: Array<{
+        scope: string;
+        target_ids?: string[];
+      }>;
+    };
+  }>(debugResponse);
+
+  // Find instagram_basic scope to get the granted IG account IDs
+  const instagramScope = debugData.data.granular_scopes?.find(
+    (s) => s.scope === "instagram_basic"
+  );
+  
+  if (!instagramScope?.target_ids?.length) {
+    throw new Error(
+      "No Instagram accounts found in token grants. Check configuration permissions."
+    );
+  }
+
+  const discoveredAccounts: DiscoveredAccount[] = [];
+
+  // For each granted IG account, find its associated Page
+  for (const igAccountId of instagramScope.target_ids) {
+    try {
+      // Find the Page that owns this IG account
+      const pagesUrl = new URL(`${facebookGraphBase()}/me/accounts`);
+      pagesUrl.searchParams.set("fields", "id,access_token,instagram_business_account");
+      pagesUrl.searchParams.set("access_token", accessToken);
+
+      const pagesResponse = await fetch(pagesUrl.toString());
+      const pagesData = await handleResponse<{
+        data: Array<{
+          id: string;
+          access_token: string;
+          instagram_business_account?: { id: string };
+        }>;
+      }>(pagesResponse);
+
+      const page = pagesData.data.find(
+        (p) => p.instagram_business_account?.id === igAccountId
+      );
+
+      if (!page) {
+        console.warn(
+          `[Instagram Account Discovery] No Page found for IG account ${igAccountId}`
+        );
+        continue;
+      }
+
+      // Fetch IG account details using the Page access token on graph.facebook.com
+      const igUrl = new URL(`${facebookGraphBase()}/${igAccountId}`);
+      igUrl.searchParams.set(
+        "fields",
+        "id,username,name,profile_picture_url,followers_count"
+      );
+      igUrl.searchParams.set("access_token", page.access_token);
+
+      const igResponse = await fetch(igUrl.toString());
+      const igData = await handleResponse<InstagramUser>(igResponse);
+
+      discoveredAccounts.push({
+        instagramId: igData.id,
+        username: igData.username,
+        name: igData.name,
+        pageId: page.id,
+        pageAccessToken: page.access_token,
+      });
+    } catch (error) {
+      console.warn(
+        `[Instagram Account Discovery] Failed to fetch account ${igAccountId}:`,
+        error
+      );
+    }
+  }
+
+  return discoveredAccounts;
+}
+
 const MEDIA_FIELDS =
   "id,caption,media_type,media_product_type,media_url,thumbnail_url,timestamp,permalink,like_count,comments_count";
 
@@ -684,9 +862,11 @@ const MEDIA_PAGE_SIZE = 100;
 
 export async function getUserMedia(
   accessToken: string,
-  limit = 25
+  limit = 25,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramMedia[]> {
-  const url = new URL(`${instagramGraphBase()}/me/media`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/me/media`);
   url.searchParams.set("fields", MEDIA_FIELDS);
   url.searchParams.set("limit", limit.toString());
   url.searchParams.set("access_token", accessToken);
@@ -704,11 +884,13 @@ export async function getUserMedia(
  */
 export async function getAllUserMedia(
   accessToken: string,
-  max = 500
+  max = 500,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramMedia[]> {
+  const config = getApiConfig(authProvider);
   const results: InstagramMedia[] = [];
 
-  const first = new URL(`${instagramGraphBase()}/me/media`);
+  const first = new URL(`${config.baseUrl}/me/media`);
   first.searchParams.set("fields", MEDIA_FIELDS);
   first.searchParams.set("limit", String(Math.min(MEDIA_PAGE_SIZE, max)));
   first.searchParams.set("access_token", accessToken);
@@ -739,9 +921,11 @@ export async function getAllUserMedia(
 export async function getMediaInsights(
   accessToken: string,
   mediaId: string,
-  metrics: string[]
+  metrics: string[],
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<InstagramMediaInsights> {
-  const url = new URL(`${instagramGraphBase()}/${mediaId}/insights`);
+  const config = getApiConfig(authProvider);
+  const url = new URL(`${config.baseUrl}/${mediaId}/insights`);
   url.searchParams.set("metric", metrics.join(","));
   url.searchParams.set("access_token", accessToken);
 
@@ -785,13 +969,15 @@ const FOLLOWER_INSIGHT_MAX_DAYS = 30;
 export async function getFollowerCountSeries(
   accessToken: string,
   instagramAccountId: string,
-  days: number = FOLLOWER_INSIGHT_MAX_DAYS
+  days: number = FOLLOWER_INSIGHT_MAX_DAYS,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<FollowerCountPoint[] | null> {
+  const config = getApiConfig(authProvider);
   const span = Math.min(Math.max(days, 1), FOLLOWER_INSIGHT_MAX_DAYS);
   const until = Math.floor(Date.now() / 1000);
   const since = until - (span - 1) * 86_400;
 
-  const url = new URL(`${instagramGraphBase()}/${instagramAccountId}/insights`);
+  const url = new URL(`${config.baseUrl}/${instagramAccountId}/insights`);
   url.searchParams.set("metric", "follower_count");
   url.searchParams.set("period", "day");
   url.searchParams.set("since", String(since));
@@ -862,21 +1048,28 @@ export async function refreshLongLivedToken(
 
 export async function subscribeInstagramAccountToWebhooks(
   instagramAccountId: string,
-  accessToken: string
+  pageIdOrNull: string | null,
+  accessToken: string,
+  authProvider: AuthProvider = "INSTAGRAM_LOGIN"
 ): Promise<{ success: boolean }> {
-  const response = await fetch(
-    `${instagramGraphBase()}/${instagramAccountId}/subscribed_apps`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        subscribed_fields: ["comments", "messages"],
-      }),
-    }
-  );
+  const config = getApiConfig(authProvider, pageIdOrNull);
+  
+  // For Facebook Login, use /{page-id}/subscribed_apps
+  // For Instagram Login, use /{ig-account-id}/subscribed_apps
+  const endpoint = authProvider === "FACEBOOK_LOGIN" && config.pageId
+    ? `${config.baseUrl}/${config.pageId}/subscribed_apps`
+    : `${config.baseUrl}/${instagramAccountId}/subscribed_apps`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      subscribed_fields: ["comments", "messages"],
+    }),
+  });
 
   return handleResponse(response);
 }

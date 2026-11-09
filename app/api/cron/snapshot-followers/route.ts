@@ -40,6 +40,9 @@ export async function GET(request: NextRequest) {
       accessToken: true,
       provider: true,
       zernioAccountId: true,
+      authProvider: true,
+      pageId: true,
+      pageAccessToken: true,
     },
   });
 

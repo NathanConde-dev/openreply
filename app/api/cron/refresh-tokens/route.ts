@@ -29,6 +29,8 @@ export async function GET(request: NextRequest) {
     },
   });
 
+  // Only refresh tokens that have an expiration date and are expiring soon
+  // SUAT tokens from Meta Unified Login have tokenExpiresAt = null and don't need refresh
   const accountsToRefresh = await prisma.instagramAccount.findMany({
     where: {
       accessToken: { not: "" },

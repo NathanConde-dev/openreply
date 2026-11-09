@@ -148,7 +148,10 @@ model InstagramAccount {
   username          String
   name              String?
   provider          InstagramProvider @default(META)
+  authProvider      AuthProvider @default(INSTAGRAM_LOGIN)
   zernioAccountId   String?
+  pageId            String?
+  pageAccessToken   String?
   accessToken       String
   tokenExpiresAt    DateTime?
   webhookSubscribed Boolean  @default(false)
@@ -417,6 +420,11 @@ enum OperationalEventLevel {
 enum InstagramProvider {
   META
   ZERNIO
+}
+
+enum AuthProvider {
+  INSTAGRAM_LOGIN
+  FACEBOOK_LOGIN
 }
 
 model ZernioConnection {

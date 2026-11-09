@@ -38,7 +38,8 @@ import {
 import {
   createInstagramContext,
   type InstagramContext,
-} from "@/lib/instagram/provider";
+  type ProviderAccount,
+} from "@/lib/instagram/context";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
 
 // Only consider comments from the last few days — older ones are outside
@@ -89,6 +90,9 @@ export async function reconcileComments(): Promise<void> {
           provider: true,
           workspaceId: true,
           zernioAccountId: true,
+          authProvider: true,
+          pageId: true,
+          pageAccessToken: true,
         },
       },
     },
@@ -143,7 +147,7 @@ async function sweepCampaign({
   sinceMs: number;
   tokenCache: Map<string, InstagramContext | null>;
 }): Promise<SweepStat> {
-  const account = automation.instagramAccount;
+  const account = automation.instagramAccount as any as ProviderAccount & { id: string };
   const stat: SweepStat = {
     campaign: automation.name,
     keywords: automation.matchAnyWord

@@ -69,8 +69,10 @@ Configure estas variáveis no serviço **web**:
 | `NEXTAUTH_SECRET` | Segredo de 32+ chars | Gere com `openssl rand -base64 32` |
 | `ENCRYPTION_KEY` | Chave hex de 32 bytes (64 chars) | Gere com `openssl rand -hex 32` |
 | `ALLOWED_EMAILS` | Emails permitidos (separados por vírgula) | `seu@email.com,outro@email.com` |
-| `INSTAGRAM_APP_ID` | App ID do Facebook/Meta | Da Meta App Dashboard |
+| `INSTAGRAM_APP_ID` | App ID do Facebook/Meta | Da Meta App Dashboard (veja nota abaixo) |
 | `INSTAGRAM_APP_SECRET` | App Secret do Facebook/Meta | Da Meta App Dashboard |
+
+**Nota sobre INSTAGRAM_APP_ID:** Se seu app foi criado recentemente (out/nov 2026+) e usa "API setup with Unified login" em vez de "API setup with Instagram login", use o **Meta App ID** (não há Instagram App ID separado). Configure também `META_LOGIN_CONFIG_ID` (veja seção Opcionais).
 
 #### Opcionais (email)
 
@@ -96,6 +98,18 @@ Escolha **UM** dos métodos:
 |----------|-----------|--------|
 | `CRON_SECRET` | Bearer token para `/api/cron/*` | Usa `NEXTAUTH_SECRET` se não definido |
 | `META_GRAPH_API_VERSION` | Versão da Meta Graph API | `v25.0` |
+| `META_LOGIN_CONFIG_ID` | ID de configuração do Meta Unified Login (apenas para apps novos out/nov 2026+) | - |
+
+**Sobre META_LOGIN_CONFIG_ID:** Apps criados recentemente (out/nov 2026+) não têm mais "API setup with Instagram login" no painel da Meta. O painel mostra "API setup with Unified login is not available for newer apps. Your app uses API setup with Unified login instead." Nesses casos:
+
+1. Use o **Meta App ID** como `INSTAGRAM_APP_ID` (não há Instagram App ID separado)
+2. Crie uma configuração no Facebook Login for Business (dashboard da Meta)
+3. Configure a variação de login como "General" e o tipo de token como "System-user access token (SUAT)" com expiração "Never"
+4. Adicione o asset de negócio "Instagram account" como obrigatório
+5. Adicione as permissões: `instagram_basic`, `instagram_manage_messages`, `instagram_manage_comments`, `instagram_content_publish`, `instagram_manage_insights`, `instagram_manage_events`, `ads_management`, `ads_read`
+6. Copie o Configuration ID e defina como `META_LOGIN_CONFIG_ID`
+
+Quando `META_LOGIN_CONFIG_ID` está definido, o OpenReply usa o fluxo de autorização do Facebook em vez do Instagram.
 
 ### Serviço Worker
 
@@ -117,14 +131,24 @@ REDIS_URL=${{Redis.REDIS_URL}}
 
 1. Acesse [developers.facebook.com](https://developers.facebook.com/apps)
 2. Crie um novo app do tipo "Business"
-3. Adicione o produto "Instagram Basic Display" ou "Instagram API"
+3. Adicione o caso de uso apropriado (veja nota abaixo)
+
+**Nota sobre apps novos (out/nov 2026+):** Apps criados recentemente não têm mais acesso ao "Instagram API with Instagram login". O painel mostra "API setup with Unified login" em vez disso. Nesse caso, siga as instruções adicionais na seção "Meta Unified Login" abaixo.
 
 ### 2. Configurar OAuth Redirect
 
-No painel da Meta App:
+**Para apps com Instagram Login (apps antigos):**
 
-1. Vá em **Configurações básicas** → **Instagram Basic Display**
+1. Vá em **Configurações básicas** → **Instagram Basic Display** ou **Instagram API**
 2. Em **Valid OAuth Redirect URIs**, adicione:
+   ```
+   https://seu-app.up.railway.app/api/instagram/callback
+   ```
+
+**Para apps com Unified Login (apps novos out/nov 2026+):**
+
+1. Vá em **Facebook Login for Business** → **Settings**
+2. Na configuração que você criou, adicione em **Valid OAuth Redirect URIs**:
    ```
    https://seu-app.up.railway.app/api/instagram/callback
    ```
@@ -151,6 +175,61 @@ Quando estiver pronto para produção:
 1. Complete a revisão de app da Meta
 2. Ative o modo "Live" (por padrão fica em Development)
 3. Apenas contas de tester funcionam em modo Development
+
+## Meta Unified Login (Apps Novos out/nov 2026+)
+
+Se você criou seu app Meta recentemente e o painel mostra "API setup with Unified login is not available for newer apps", siga estas etapas adicionais:
+
+### 1. Encontrar seus IDs
+
+No Meta App Dashboard:
+
+- **App ID**: Vá em Settings → Basic. Este é seu `INSTAGRAM_APP_ID` (não há Instagram App ID separado para apps novos)
+- **App Secret**: Na mesma página, clique em "Show" ao lado de App Secret. Este é seu `INSTAGRAM_APP_SECRET`
+- **Facebook App Secret**: Este é o mesmo que o App Secret acima. Use o mesmo valor para `FACEBOOK_APP_SECRET`
+
+### 2. Criar Configuração de Login
+
+1. No painel da Meta, vá em **Facebook Login for Business**
+2. Clique em **Create Configuration**
+3. Configure:
+   - **Login variation**: General
+   - **Access token type**: System-user access token (SUAT)
+   - **Expiration**: Never
+   - **Business assets**: Marque "Instagram account" como **Required**
+   - **Permissions**: Adicione as seguintes permissões:
+     - `instagram_basic`
+     - `instagram_manage_messages`
+     - `instagram_manage_comments`
+     - `instagram_content_publish`
+     - `instagram_manage_insights`
+     - `instagram_manage_events`
+     - `ads_management` (opcional)
+     - `ads_read` (opcional)
+4. Salve a configuração
+5. Copie o **Configuration ID** e defina como `META_LOGIN_CONFIG_ID` no Railway
+
+### 3. Registrar URL de Callback
+
+Na configuração que você criou:
+
+1. Vá em **Settings**
+2. Em **Valid OAuth Redirect URIs**, adicione:
+   ```
+   https://seu-app.up.railway.app/api/instagram/callback
+   ```
+
+### 4. Configurar Webhook
+
+O webhook funciona da mesma forma que com Instagram Login:
+
+1. Vá em **Webhooks** → **Instagram**
+2. Configure:
+   - **Callback URL**: `https://seu-app.up.railway.app/api/webhook`
+   - **Verify Token**: o valor de `WEBHOOK_VERIFY_TOKEN`
+   - **Campos**: marque `comments` e `messages`
+
+**Nota importante:** Com o Unified Login, a inscrição do webhook para a conta Instagram é feita automaticamente pela configuração de caso de uso. Certifique-se de que o webhook está subscrito ao evento `instagram` no nível do app.
 
 ## Verificar deployment
 

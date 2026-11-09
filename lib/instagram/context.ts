@@ -2,7 +2,13 @@ import { decryptToken } from "@/lib/meta/oauth";
 import { prisma } from "@/lib/db/client";
 
 export type InstagramContext =
-  | { provider: "META"; accessToken: string }
+  | {
+      provider: "META";
+      accessToken: string;
+      authProvider: "INSTAGRAM_LOGIN" | "FACEBOOK_LOGIN";
+      pageId: string | null;
+      pageAccessToken: string | null;
+    }
   | {
       provider: "ZERNIO";
       apiKey: string;
@@ -17,6 +23,9 @@ export type ProviderAccount = {
   zernioAccountId: string | null;
   instagramId: string;
   accessToken: string;
+  authProvider: "INSTAGRAM_LOGIN" | "FACEBOOK_LOGIN";
+  pageId: string | null;
+  pageAccessToken: string | null;
 };
 
 export function hasInstagramCredentials(
@@ -31,8 +40,17 @@ export async function createInstagramContext(
   account: ProviderAccount,
   operationId?: string
 ): Promise<InstagramContext> {
-  if (account.provider !== "ZERNIO")
-    return { provider: "META", accessToken: decryptToken(account.accessToken) };
+  if (account.provider !== "ZERNIO") {
+    return {
+      provider: "META",
+      accessToken: decryptToken(account.accessToken),
+      authProvider: account.authProvider,
+      pageId: account.pageId ? decryptToken(account.pageId) : null,
+      pageAccessToken: account.pageAccessToken
+        ? decryptToken(account.pageAccessToken)
+        : null,
+    };
+  }
   if (!account.zernioAccountId)
     throw new Error("Zernio account is not connected");
   const connection = await prisma.zernioConnection.findUnique({
