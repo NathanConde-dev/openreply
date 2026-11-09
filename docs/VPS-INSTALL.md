@@ -2,7 +2,7 @@
 
 Guia completo para instalar o OpenReply em qualquer VPS usando Docker Compose.
 
-**Testado em:** Hostinger VPS, DigitalOcean, AWS EC2, Google Cloud, Vultr, Linode
+**Funciona em:** Qualquer VPS com Docker (Hostinger VPS, DigitalOcean, AWS EC2, Google Cloud, Vultr, Linode, etc.)
 
 ## Pré-requisitos
 

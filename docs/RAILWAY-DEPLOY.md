@@ -35,23 +35,31 @@ Apenas o serviço `web` precisa estar exposto publicamente. Os demais (worker, P
 ### 4. Adicionar serviço Web
 
 1. Clique em "+ New"
-2. Selecione "GitHub Repo" e conecte este repositório (ou "Empty Service" se preferir deploy manual)
-3. Configure as variáveis de ambiente (veja seção abaixo)
+2. Selecione "GitHub Repo" e conecte este repositório
+3. Em "Settings" → "General":
+   - **Custom Start Command**: `npm run start`
+   - **Railway Config Path**: `railway.web.json` (ou deixe vazio e configure start command manual)
 4. Em "Settings" → "Networking", habilite um domínio público (Generate Domain)
-5. Em "Settings" → "Deploy", configure:
-   - **Build Command**: `npm ci && npm run build && npx prisma migrate deploy`
-   - **Start Command**: `npm run start`
-6. Em "Settings", configure `PORT` (Railway injeta automaticamente)
+5. Configure as variáveis de ambiente (veja seção abaixo)
+
+**Nota:** O `railway.web.json` configura automaticamente:
+- Builder: Dockerfile
+- Pre-Deploy Command: `npx prisma migrate deploy`
+- Start Command: `npm run start`
 
 ### 5. Adicionar serviço Worker
 
 1. Clique em "+ New"
-2. Selecione "GitHub Repo" e escolha o mesmo repositório (ou clone do web)
-3. Configure as mesmas variáveis de ambiente do serviço web (exceto `NEXTAUTH_URL`)
-4. Em "Settings" → "Deploy", configure:
-   - **Build Command**: `npm ci && npm run build`
-   - **Start Command**: `npm run worker`
+2. Selecione "GitHub Repo" e escolha o mesmo repositório
+3. Em "Settings" → "General":
+   - **Custom Start Command**: `npm run worker`
+   - **Railway Config Path**: `railway.worker.json` (ou deixe vazio e configure start command manual)
+4. Configure as mesmas variáveis de ambiente do serviço web (exceto `NEXTAUTH_URL`)
 5. Em "Settings" → "Networking", mantenha privado (sem domínio público)
+
+**Nota:** O `railway.worker.json` configura automaticamente:
+- Builder: Dockerfile
+- Start Command: `npm run worker`
 
 ## Variáveis de ambiente
 

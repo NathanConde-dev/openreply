@@ -53,12 +53,12 @@ docker compose up -d
 docker compose logs -f
 ```
 
-**Testado em:**
-- ✅ Hostinger VPS
-- ✅ DigitalOcean Droplets
-- ✅ AWS EC2
-- ✅ Google Cloud Compute
-- ✅ Qualquer VPS com Docker
+**Funciona em qualquer VPS com Docker:**
+- Hostinger VPS
+- DigitalOcean Droplets
+- AWS EC2 / Lightsail
+- Google Cloud Compute
+- Vultr, Linode, Hetzner, etc.
 
 [Guia completo de instalação VPS →](docs/VPS-INSTALL.md)
 
