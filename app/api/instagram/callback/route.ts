@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
-import { getBaseUrl } from "@/lib/env";
+import { getBaseUrl, isMetaUnifiedLoginEnabled } from "@/lib/env";
 import { canConnectInstagramAccount } from "@/lib/instagram-accounts";
-import { getLongLivedToken, getUserInfo, subscribeInstagramAccountToWebhooks } from "@/lib/meta/client";
+import { 
+  getLongLivedToken, 
+  getUserInfo, 
+  discoverInstagramAccountsFromSUAT,
+  subscribeInstagramAccountToWebhooks 
+} from "@/lib/meta/client";
 import {
   encryptToken,
   exchangeCodeForToken,
@@ -47,14 +52,61 @@ export async function GET(request: NextRequest) {
       code,
       redirectUri
     );
-    const { accessToken: longLivedToken, expiresIn } =
-      await getLongLivedToken(shortLivedToken);
-    const userInfo = await getUserInfo(longLivedToken);
-    // Webhooks and the messaging API key off the professional account ID
-    // (user_id), not the app-scoped `id`. Store user_id so comment webhooks
-    // can be matched back to this account. Fall back to id if user_id is
-    // ever absent.
-    const instagramId = userInfo.user_id ?? userInfo.id;
+
+    let longLivedToken: string;
+    let expiresIn: number;
+    const instagramAccounts: Array<{
+      instagramId: string;
+      username: string;
+      name?: string;
+    }> = [];
+
+    if (isMetaUnifiedLoginEnabled()) {
+      // Meta Unified Login flow: SUAT doesn't need exchange to long-lived
+      // According to Meta docs, SUATs with "Never" expiration don't expire
+      longLivedToken = shortLivedToken;
+      expiresIn = 0; // Will be stored as null (no expiration)
+
+      // Discover Instagram accounts granted to this SUAT
+      const discoveredAccounts = await discoverInstagramAccountsFromSUAT(longLivedToken);
+      
+      if (discoveredAccounts.length === 0) {
+        throw new Error(
+          "No Instagram Business accounts found. Make sure your configuration includes Instagram account access."
+        );
+      }
+
+      // For now, connect the first account found
+      // TODO: In the future, we could show a UI to let users choose which account to connect
+      const account = discoveredAccounts[0];
+      instagramAccounts.push({
+        instagramId: account.user_id ?? account.id,
+        username: account.username,
+        name: account.name,
+      });
+    } else {
+      // Legacy Instagram Login flow
+      const { accessToken: token, expiresIn: expires } =
+        await getLongLivedToken(shortLivedToken);
+      longLivedToken = token;
+      expiresIn = expires;
+
+      const userInfo = await getUserInfo(longLivedToken);
+      // Webhooks and the messaging API key off the professional account ID
+      // (user_id), not the app-scoped `id`. Store user_id so comment webhooks
+      // can be matched back to this account. Fall back to id if user_id is
+      // ever absent.
+      const instagramId = userInfo.user_id ?? userInfo.id;
+      instagramAccounts.push({
+        instagramId,
+        username: userInfo.username,
+        name: userInfo.name,
+      });
+    }
+
+    // Process the discovered account(s) - for now just the first one
+    const { instagramId, username, name } = instagramAccounts[0];
+
     const connection = await canConnectInstagramAccount({
       workspaceId: state.workspaceId,
       instagramId,
@@ -67,7 +119,7 @@ export async function GET(request: NextRequest) {
     }
 
     const encryptedToken = encryptToken(longLivedToken);
-    const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+    const tokenExpiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null;
 
     let webhookSubscribed = false;
     try {
@@ -84,8 +136,8 @@ export async function GET(request: NextRequest) {
     }
 
     const data = {
-      username: userInfo.username,
-      name: userInfo.name,
+      username,
+      name,
       accessToken: encryptedToken,
       tokenExpiresAt,
       webhookSubscribed,

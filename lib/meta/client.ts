@@ -676,6 +676,57 @@ export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
   return handleResponse<InstagramUser>(response);
 }
 
+/**
+ * Discover Instagram Business accounts granted to a Meta Unified Login SUAT.
+ * For tokens from configuration-based authorization (System User Access Token),
+ * we need to query the Facebook Pages linked to the business, then retrieve
+ * their associated Instagram Business accounts.
+ */
+export async function discoverInstagramAccountsFromSUAT(
+  accessToken: string
+): Promise<InstagramUser[]> {
+  // First, get Facebook Pages accessible with this token
+  // The SUAT is associated with business assets including Instagram accounts
+  const pagesUrl = new URL(`${facebookGraphBase()}/me/accounts`);
+  pagesUrl.searchParams.set("fields", "id,instagram_business_account");
+  pagesUrl.searchParams.set("access_token", accessToken);
+
+  const pagesResponse = await fetch(pagesUrl.toString());
+  const pagesData = await handleResponse<{
+    data: Array<{ id: string; instagram_business_account?: { id: string } }>;
+  }>(pagesResponse);
+
+  const instagramAccounts: InstagramUser[] = [];
+
+  // For each page with an Instagram Business account, fetch its details
+  for (const page of pagesData.data) {
+    if (!page.instagram_business_account?.id) continue;
+
+    const igAccountId = page.instagram_business_account.id;
+    const igUrl = new URL(`${instagramGraphBase()}/${igAccountId}`);
+    igUrl.searchParams.set(
+      "fields",
+      "id,username,name,profile_picture_url,followers_count"
+    );
+    igUrl.searchParams.set("access_token", accessToken);
+
+    try {
+      const igResponse = await fetch(igUrl.toString());
+      const igData = await handleResponse<InstagramUser>(igResponse);
+      // For Unified Login, the ID from the API is already the professional account ID
+      // (equivalent to user_id in the old flow)
+      instagramAccounts.push({ ...igData, user_id: igData.id });
+    } catch (error) {
+      console.warn(
+        `[Instagram Account Discovery] Failed to fetch account ${igAccountId}:`,
+        error
+      );
+    }
+  }
+
+  return instagramAccounts;
+}
+
 const MEDIA_FIELDS =
   "id,caption,media_type,media_product_type,media_url,thumbnail_url,timestamp,permalink,like_count,comments_count";
 

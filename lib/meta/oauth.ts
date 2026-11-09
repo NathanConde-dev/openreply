@@ -5,7 +5,13 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import { 
+  getEncryptionKeyHex, 
+  requireEnv, 
+  isMetaUnifiedLoginEnabled, 
+  getMetaLoginConfigId,
+  getMetaGraphApiVersion 
+} from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -14,6 +20,10 @@ import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
 // api.instagram.com — only the authorize hop moved.
 const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
 const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+// Meta Unified Login (Facebook Login for Business) for apps created Oct/Nov 2026+
+// that no longer have separate Instagram App ID and use config-based authorization.
+const META_UNIFIED_OAUTH_URL = "https://www.facebook.com";
+const META_UNIFIED_TOKEN_URL = "https://graph.facebook.com";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
@@ -88,6 +98,26 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  if (isMetaUnifiedLoginEnabled()) {
+    // Meta Unified Login flow (Facebook Login for Business)
+    // Uses configuration-based authorization without explicit scope parameter
+    const configId = getMetaLoginConfigId();
+    if (!configId) {
+      throw new Error("META_LOGIN_CONFIG_ID is required when using Meta Unified Login");
+    }
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"), // In Unified Login, this is the Meta App ID
+      config_id: configId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      override_default_response_type: "true",
+      state,
+    });
+
+    return `${META_UNIFIED_OAUTH_URL}/${getMetaGraphApiVersion()}/dialog/oauth?${params.toString()}`;
+  }
+
+  // Legacy Instagram Login flow
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -104,6 +134,39 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId: string }> {
+  if (isMetaUnifiedLoginEnabled()) {
+    // Meta Unified Login token exchange via Facebook Graph API
+    const body = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      client_secret: requireEnv("INSTAGRAM_APP_SECRET"),
+      redirect_uri: redirectUri,
+      code,
+    });
+
+    const tokenUrl = `${META_UNIFIED_TOKEN_URL}/${getMetaGraphApiVersion()}/oauth/access_token`;
+    const response = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        `Meta Unified Login token exchange failed: ${error.error?.message || JSON.stringify(error)}`
+      );
+    }
+
+    const data = await response.json();
+    // For Unified Login, we get a SUAT (System User Access Token) that doesn't
+    // directly contain a user_id. We'll discover the Instagram account in the callback.
+    return {
+      accessToken: data.access_token,
+      userId: "", // Will be populated after account discovery
+    };
+  }
+
+  // Legacy Instagram Login token exchange
   const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),

@@ -46,6 +46,14 @@ export function getMissingInstagramOAuthEnv(): string[] {
   });
 }
 
+export function isMetaUnifiedLoginEnabled(): boolean {
+  return Boolean(process.env.META_LOGIN_CONFIG_ID);
+}
+
+export function getMetaLoginConfigId(): string | undefined {
+  return process.env.META_LOGIN_CONFIG_ID;
+}
+
 export function getMetaGraphApiVersion(): string {
   return process.env.META_GRAPH_API_VERSION ?? "v25.0";
 }
