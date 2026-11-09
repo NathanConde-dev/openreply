@@ -8,6 +8,7 @@ import { claimCommentDelivery, MAX_COMMENT_SEND_ATTEMPTS } from "./comment-deliv
 import { createHash } from "node:crypto";
 import { UnrecoverableError, Worker, type Job } from "bullmq";
 import { processTokenRefresh, isTokenRefreshJob } from "@/worker/token-refresh-job";
+import { processFollowerSnapshot, isFollowerSnapshotJob } from "@/worker/follower-snapshot-job";
 import {
   getDMQueue,
   getRedisConnection,
@@ -1538,6 +1539,9 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
   if (isTokenRefreshJob(job.name)) {
     return processTokenRefresh();
+  }
+  if (isFollowerSnapshotJob(job.name)) {
+    return processFollowerSnapshot();
   }
   if (job.name === POSTBACK_JOB_NAME) {
     return processPostback(job as Job<ProcessPostbackJob>);

@@ -405,6 +405,7 @@ enum OperationalEventSource {
   TOKEN_REFRESH
   HEALTH
   SYSTEM
+  FOLLOWER_SNAPSHOT
 }
 
 enum OperationalEventLevel {
