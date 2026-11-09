@@ -7,6 +7,7 @@ import {
 import { claimCommentDelivery, MAX_COMMENT_SEND_ATTEMPTS } from "./comment-delivery";
 import { createHash } from "node:crypto";
 import { UnrecoverableError, Worker, type Job } from "bullmq";
+import { processTokenRefresh, isTokenRefreshJob } from "@/worker/token-refresh-job";
 import {
   getDMQueue,
   getRedisConnection,
@@ -685,7 +686,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         const promptText = renderMessageWithoutLink({
           message:
             automation.followPromptMessage ||
-            "quick favor before i send your link. i don't make any money from this, it's free. if you want to support me, just don't unfollow after, and star the repo on github if it helps you. tap the button once you're following and i'll send it over",
+            "Antes de enviar seu link, me segue no perfil! É rapidinho e me ajuda muito. Depois de seguir, é só tocar no botão abaixo que eu mando pra você.",
           commenterName,
         });
         await sendPrivateReplyWithButton({
@@ -693,7 +694,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
           text: promptText,
-          buttonTitle: automation.followPromptButtonLabel || "i'm following",
+          buttonTitle: automation.followPromptButtonLabel || "Já segui",
           payload: `followcheck:${automation.id}`,
           postId: mediaId,
         });
@@ -1054,7 +1055,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       const promptText = renderMessageWithoutLink({
         message:
           automation.followPromptMessage ||
-          "quick favor before i send your link. i don't make any money from this, it's free. if you want to support me, just don't unfollow after, and star the repo on github if it helps you. tap the button once you're following and i'll send it over",
+          "Antes de enviar seu link, me segue no perfil! É rapidinho e me ajuda muito. Depois de seguir, é só tocar no botão abaixo que eu mando pra você.",
         commenterName,
       });
       try {
@@ -1067,7 +1068,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
               userId: userId,
               text: promptText,
               buttonTitle:
-                automation.followPromptButtonLabel || "i'm following",
+                automation.followPromptButtonLabel || "Já segui",
               payload: `followcheck:${automation.id}`,
             }),
         });
@@ -1442,7 +1443,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         const promptText = renderMessageWithoutLink({
           message:
             automation.followPromptMessage ||
-            "Almost there! Follow me and tap the button below to grab your link 💛",
+            "Quase lá! Me segue e toca no botão abaixo pra pegar seu link 💛",
           commenterName,
         });
         await sendDirectMessageWithButton({
@@ -1450,7 +1451,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           instagramAccountId: automation.instagramAccount.instagramId,
           userId: senderId,
           text: promptText,
-          buttonTitle: automation.followPromptButtonLabel || "I'm following ✅",
+          buttonTitle: automation.followPromptButtonLabel || "Já segui ✅",
           payload: `followcheck:${automation.id}`,
         });
       } else {
@@ -1535,6 +1536,9 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 }
 
 async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
+  if (isTokenRefreshJob(job.name)) {
+    return processTokenRefresh();
+  }
   if (job.name === POSTBACK_JOB_NAME) {
     return processPostback(job as Job<ProcessPostbackJob>);
   }
