@@ -60,6 +60,10 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"ADMIN" | "MEMBER">("MEMBER");
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [systemUserToken, setSystemUserToken] = useState("");
+  const [systemUserError, setSystemUserError] = useState<string | null>(null);
+  const [systemUserSuccess, setSystemUserSuccess] = useState<string | null>(null);
+  const [showSystemUserConnect, setShowSystemUserConnect] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -77,6 +81,31 @@ export default function SettingsPage() {
     const res = await fetch("/api/workspace/members");
     const payload = await res.json();
     if (payload.success) setMembersData(payload.data);
+  }
+
+  async function connectSystemUser(event: React.FormEvent) {
+    event.preventDefault();
+    setSystemUserError(null);
+    setSystemUserSuccess(null);
+    setBusy("system-user");
+
+    // Get workspaceId from the session via the API
+    const res = await fetch("/api/instagram/connect-system-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: systemUserToken }),
+    });
+
+    const payload = await res.json();
+    if (res.ok && payload.ok) {
+      setSystemUserSuccess(`Conectado @${payload.username} com sucesso!`);
+      setSystemUserToken("");
+      setShowSystemUserConnect(false);
+      setTimeout(() => window.location.reload(), 1500);
+    } else {
+      setSystemUserError(payload.error ?? "Falha na conexão");
+    }
+    setBusy(null);
   }
 
   async function disconnectInstagram(instagramAccountId: string) {
@@ -220,13 +249,55 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="mt-6 pt-4 border-t border-border flex gap-3">
-          <a
-            href="/api/instagram/connect"
-            className="px-4 py-2 rounded text-sm font-medium transition-colors bg-accent text-white hover:bg-accent-hover"
-          >
-            {t("Connect using your own Meta app")}
-          </a>
+        <div className="mt-6 pt-4 border-t border-border space-y-4">
+          <div className="flex gap-3">
+            <a
+              href="/api/instagram/connect"
+              className="px-4 py-2 rounded text-sm font-medium transition-colors bg-accent text-white hover:bg-accent-hover"
+            >
+              {t("Connect using your own Meta app")}
+            </a>
+            {canManageMembers && (
+              <button
+                type="button"
+                onClick={() => setShowSystemUserConnect(!showSystemUserConnect)}
+                className="px-4 py-2 rounded text-sm font-medium transition-colors border border-border text-foreground hover:bg-surface"
+              >
+                {showSystemUserConnect ? t("Cancel") : "Conectar com token de usuário do sistema"}
+              </button>
+            )}
+          </div>
+
+          {canManageMembers && showSystemUserConnect && (
+            <form onSubmit={connectSystemUser} className="space-y-3 p-4 rounded border border-border bg-surface/50">
+              <h3 className="text-sm font-semibold">Token de Usuário do Sistema</h3>
+              <p className="text-xs text-muted">
+                No Business Manager: Configurações comerciais &gt; Usuários do sistema &gt; criar usuário &gt; atribuir ativos: app + conta do Instagram com controle total &gt; gerar token com permissões instagram_basic, instagram_manage_messages, instagram_manage_comments, business_management &gt; expiração: Nunca.
+              </p>
+              <textarea
+                value={systemUserToken}
+                onChange={(e) => setSystemUserToken(e.target.value)}
+                placeholder="Cole o token aqui (nunca será exibido)"
+                rows={3}
+                className="w-full rounded border border-border bg-background px-3 py-2 text-sm font-mono text-foreground outline-none transition-colors focus:border-accent/40"
+                style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+                required
+              />
+              {systemUserError && (
+                <p className="text-sm text-error">{systemUserError}</p>
+              )}
+              {systemUserSuccess && (
+                <p className="text-sm text-success">{systemUserSuccess}</p>
+              )}
+              <button
+                type="submit"
+                disabled={busy === "system-user" || !systemUserToken.trim()}
+                className="rounded bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+              >
+                {busy === "system-user" ? "Conectando..." : "Conectar"}
+              </button>
+            </form>
+          )}
         </div>
       </section>
 
